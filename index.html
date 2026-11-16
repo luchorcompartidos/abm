@@ -579,6 +579,23 @@ window.addEventListener('storage',ev=>{if(ev.key===LS){st=load();render();}});
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
 
+/* ---------- Botón Atrás (Android): cascada + doble toque para salir ---------- */
+let armed=false,exitUntil=0,exitTimer=null;
+function arm(){if(!armed){history.pushState({abm:1},'');armed=true;}}
+window.addEventListener('popstate',()=>{
+  armed=false;
+  const ovs=document.querySelectorAll('.ov');
+  if(ovs.length){close(ovs[ovs.length-1]);arm();return;}            // 1) cerrar formulario o menú
+  if(ui.q){ui.q='';save();render();arm();return;}                    // 2) limpiar búsqueda
+  const es=ents(),e=curEnt();
+  if(es.length&&e&&e.id!==es[0].id){ui.ent=es[0].id;save();render();window.scrollTo(0,0);arm();return;} // 3) volver a la 1ra pestaña
+  if(now()<exitUntil)return;                                         // 4) segundo toque: sale
+  exitUntil=now()+2000;toast('Presioná Atrás otra vez para salir');
+  clearTimeout(exitTimer);exitTimer=setTimeout(arm,2000);
+});
+document.addEventListener('pointerdown',()=>{if(!armed){exitUntil=0;arm();}},true);
+arm();
+
 render();
 sync(false);
 </script>
