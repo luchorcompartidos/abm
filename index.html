@@ -26,7 +26,15 @@ header{position:sticky;top:0;z-index:5;background:var(--card);box-shadow:0 1px 4
 .tabs button.on{opacity:1;border-color:#fff;font-weight:600}
 .subs{display:flex;gap:6px;overflow-x:auto;padding:9px 10px 6px;scrollbar-width:none}
 .chip{flex:none;border:1px solid var(--bd);background:var(--bg);color:var(--tx);border-radius:18px;padding:7px 13px;font-size:14px}
-.chip small{opacity:.6;margin-left:2px}.chip.on{background:var(--pri);color:#fff;border-color:var(--pri)}
+.chip small{opacity:.6;margin-left:5px}
+.chip.has{border-color:var(--pri);font-weight:600}.chip.zero{opacity:.55;border-style:dashed}.chip.on.zero{opacity:1}
+.tabs button small{opacity:.75;margin-left:5px;font-size:12px;font-weight:400}
+.subs .chip,.tabs button{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.dragging{opacity:.9;transform:scale(1.08);box-shadow:0 4px 12px rgba(0,0,0,.3);position:relative;z-index:3}
+.subswrap{position:relative}
+.sarr{position:absolute;top:0;bottom:0;width:36px;border:0;padding:0;font-size:26px;line-height:1;color:var(--pri);z-index:4;display:none}
+.sarr.l{left:0;background:linear-gradient(90deg,var(--card) 55%,transparent)}.sarr.r{right:0;background:linear-gradient(270deg,var(--card) 55%,transparent)}
+.sarr.on{display:block}.chip.on{background:var(--pri);color:#fff;border-color:var(--pri)}
 .chip.add{border-style:dashed;color:var(--pri)}
 .tools{display:flex;gap:6px;padding:2px 10px 9px}
 .tools input,.tools select{min-width:0;font-size:14px;padding:8px 9px;border:1px solid var(--bd);border-radius:9px;background:var(--bg);color:var(--tx)}
@@ -76,7 +84,7 @@ main{padding:10px}
     </div>
     <nav class="tabs" id="tabs"></nav>
   </div>
-  <div class="subs" id="subs"></div>
+  <div class="subswrap"><button class="sarr l" id="sL" aria-label="Ver anteriores">‹</button><div class="subs" id="subs"></div><button class="sarr r" id="sR" aria-label="Ver más">›</button></div>
   <div class="tools" id="tools">
     <input id="q" type="search" placeholder="Buscar…">
     <select id="flt"></select>
@@ -163,7 +171,7 @@ function mergeRemote(it){ // viene de la Sheet
 /* ---------- Estado de UI ---------- */
 function curEnt(){const es=ents();const e=es.find(x=>x.id===ui.ent)||es[0];ui.ent=e&&e.id;return e;}
 function curSub(e){
-  if(!e)return null;const ss=subsOf(e.id);const s=ss.find(x=>x.id===ui.sub[e.id])||ss[0];
+  if(!e)return null;const ss=shownSubs(e);const s=ss.find(x=>x.id===ui.sub[e.id])||ss[0];
   if(s)ui.sub[e.id]=s.id;return s;
 }
 const subLbl=e=>(e&&e.d.subLabel)||'Sub-pestaña';
@@ -171,13 +179,22 @@ const mainField=e=>{const F=e.d.fields||[];return F.find(f=>f.main)||F.find(f=>f
 const filterField=e=>{const F=e.d.fields||[];return F.find(f=>f.t==='select'&&f.k==='estado')||F.find(f=>f.t==='select');};
 
 /* ---------- Render ---------- */
+let dragging=false,renderPending=false;
+function countsBySub(){const c={};Object.values(st.items).forEach(i=>{if(i.kind==='record'&&!i.deleted)c[i.parentId]=(c[i.parentId]||0)+1;});return c;}
+function shownSubs(e,c){ // automático: más registros primero, luego A→Z; manual: el orden arrastrado
+  const ss=subsOf(e.id);if(e.d.subOrder==='manual')return ss;c=c||countsBySub();
+  return ss.sort((a,b)=>(c[b.id]||0)-(c[a.id]||0)||String(a.d.name).localeCompare(String(b.d.name),'es',{sensitivity:'base'}));
+}
 function render(){
-  const e=curEnt(),s=curSub(e);
-  $('#tabs').innerHTML=ents().map(x=>`<button data-e="${x.id}" class="${e&&x.id===e.id?'on':''}">${esc(x.d.name)}</button>`).join('')
+  if(dragging){renderPending=true;return;}
+  const c=countsBySub(),e=curEnt(),s=curSub(e);
+  const tot=x=>subsOf(x.id).reduce((n,sb)=>n+(c[sb.id]||0),0);
+  $('#tabs').innerHTML=ents().map(x=>`<button data-e="${x.id}" class="${e&&x.id===e.id?'on':''}">${esc(x.d.name)}<small>${tot(x)}</small></button>`).join('')
     +`<button data-act="newEnt" title="Nueva pestaña">＋</button>`;
-  $('#subs').innerHTML=e?subsOf(e.id).map(x=>`<button class="chip ${s&&x.id===s.id?'on':''}" data-s="${x.id}">${esc(x.d.name)}<small>${recsOf(x.id).length}</small></button>`).join('')
+  $('#subs').innerHTML=e?shownSubs(e,c).map(x=>{const n=c[x.id]||0;return `<button class="chip ${n?'has':'zero'} ${s&&x.id===s.id?'on':''}" data-s="${x.id}">${esc(x.d.name)}<small>${n}</small></button>`;}).join('')
     +`<button class="chip add" data-act="newSub">＋ ${esc(subLbl(e))}</button><button class="chip" data-act="menu" title="Opciones">⋯</button>`:'';
   renderTools(e);renderList(e,s);renderDot();
+  requestAnimationFrame(updArrows);
 }
 function renderTools(e){
   $('#tools').style.display=e?'flex':'none';if(!e)return;
@@ -312,6 +329,7 @@ function openMenu(){
     ${s?`<button class="btn" data-a="renSub">✏️ Renombrar ${L}</button>
     <div class="row sm"><button class="btn" data-a="subL">⬅️ Mover ${L}</button><button class="btn" data-a="subR">Mover ${L} ➡️</button></div>
     <button class="btn d" data-a="delSub">🗑 Eliminar ${L} “${esc(s.d.name)}” y sus registros</button><hr>`:''}
+    ${e.d.subOrder==='manual'?`<button class="btn" data-a="autoOrd">🔢 Volver al orden automático de ${L}s (por cantidad)</button>`:''}
     <button class="btn" data-a="cfgEnt">⚙️ Configurar pestaña (nombre y campos)</button>
     <div class="row sm"><button class="btn" data-a="entL">⬅️ Mover pestaña</button><button class="btn" data-a="entR">Mover pestaña ➡️</button></div>
     ${e.id!=='ent_backlog'?`<button class="btn d" data-a="delEnt">🗑 Eliminar pestaña “${esc(e.d.name)}” completa</button>`:''}
@@ -319,7 +337,8 @@ function openMenu(){
   ov.addEventListener('click',ev=>{
     const a=ev.target.closest('[data-a]');if(!a)return;const k=a.dataset.a;
     if(k==='renSub'){const n=(prompt('Nuevo nombre:',s.d.name)||'').trim();if(n){s.d={...s.d,name:n};put(s);}}
-    if(k==='subL'||k==='subR')move(subsOf(e.id),s,k==='subL'?-1:1);
+    if(k==='subL'||k==='subR'){const arr=shownSubs(e);if(e.d.subOrder!=='manual'){e.d={...e.d,subOrder:'manual'};put(e);}move(arr,s,k==='subL'?-1:1);}
+    if(k==='autoOrd'){e.d={...e.d,subOrder:'auto'};put(e);toast('Orden automático');}
     if(k==='entL'||k==='entR')move(ents(),e,k==='entL'?-1:1);
     if(k==='delSub'&&confirm(`¿Eliminar “${s.d.name}” y sus ${recsOf(s.id).length} registro(s)?`)){del(s);toast('Eliminada');}
     if(k==='delEnt'&&confirm(`¿Eliminar la pestaña “${e.d.name}” con todas sus sub-pestañas y registros?`)){del(e);ui.ent=null;toast('Pestaña eliminada');}
@@ -561,7 +580,7 @@ function openCfg(){
 document.addEventListener('click',ev=>{
   if(ev.target.closest('.ov'))return;
   const t=ev.target.closest('[data-e],[data-s],[data-act],[data-r]');if(!t)return;
-  if(t.dataset.e){ui.ent=t.dataset.e;save();render();window.scrollTo(0,0);return;}
+  if(t.dataset.e){ui.ent=t.dataset.e;save();render();$('#subs').scrollLeft=0;window.scrollTo(0,0);return;}
   if(t.dataset.s){const e=curEnt();if(e){ui.sub[e.id]=t.dataset.s;save();render();window.scrollTo(0,0);}return;}
   if(t.dataset.r){openRec(t.dataset.r);return;}
   const a=t.dataset.act;
@@ -580,6 +599,67 @@ setInterval(()=>{if(document.visibilityState==='visible')sync(false);},120000);
 window.addEventListener('storage',ev=>{if(ev.key===LS){st=load();render();}});
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+/* ---------- Desplazamiento horizontal de sub-pestañas ---------- */
+function updArrows(){const S=$('#subs');$('#sL').classList.toggle('on',S.scrollLeft>4);$('#sR').classList.toggle('on',S.scrollLeft+S.clientWidth<S.scrollWidth-4);}
+(()=>{
+  const S=$('#subs'),by=d=>S.scrollBy({left:d,behavior:'smooth'});
+  S.addEventListener('scroll',updArrows,{passive:true});window.addEventListener('resize',updArrows);
+  $('#sL').onclick=()=>by(-S.clientWidth*0.7);$('#sR').onclick=()=>by(S.clientWidth*0.7);
+  S.addEventListener('wheel',ev=>{if(Math.abs(ev.deltaY)>Math.abs(ev.deltaX)&&S.scrollWidth>S.clientWidth){S.scrollLeft+=ev.deltaY;ev.preventDefault();}},{passive:false});
+  document.addEventListener('keydown',ev=>{
+    const k=ev.key;if(!['ArrowLeft','ArrowRight','Home','End'].includes(k)||ev.altKey||ev.ctrlKey||ev.metaKey)return;
+    if(document.querySelector('.ov')||(ev.target.closest&&ev.target.closest('input,textarea,select')))return;
+    if(k==='Home')S.scrollTo({left:0,behavior:'smooth'});else if(k==='End')S.scrollTo({left:S.scrollWidth,behavior:'smooth'});
+    else by(k==='ArrowRight'?160:-160);
+    ev.preventDefault();
+  });
+})();
+
+/* ---------- Arrastrar y soltar (pestañas y sub-pestañas) ----------
+   Celular: mantener apretado ~0,5 s y arrastrar. Computadora: arrastrar con el mouse. */
+function enableDrag(box,sel,onDrop){
+  let it=null,timer=null,sx=0,sy=0,active=false,pid=null,orig='';
+  const idsNow=()=>[...box.querySelectorAll(sel)].map(x=>x.dataset.s||x.dataset.e);
+  const start=()=>{if(!it)return;active=true;dragging=true;orig=idsNow().join();it.classList.add('dragging');
+    try{it.setPointerCapture(pid);}catch(e){}if(navigator.vibrate)navigator.vibrate(15);};
+  const reset=()=>{clearTimeout(timer);timer=null;if(it)it.classList.remove('dragging');it=null;active=false;};
+  box.addEventListener('pointerdown',ev=>{
+    const t=ev.target.closest(sel);if(!t||!box.contains(t)||ev.button>0)return;
+    it=t;pid=ev.pointerId;sx=ev.clientX;sy=ev.clientY;active=false;
+    if(ev.pointerType!=='mouse')timer=setTimeout(start,450);
+  });
+  box.addEventListener('pointermove',ev=>{
+    if(!it)return;
+    if(!active){const d=Math.hypot(ev.clientX-sx,ev.clientY-sy);
+      if(ev.pointerType==='mouse'){if(d>6)start();else return;}else{if(d>8)reset();return;}}
+    ev.preventDefault();
+    const r=box.getBoundingClientRect();
+    if(ev.clientX<r.left+30)box.scrollLeft-=12;else if(ev.clientX>r.right-30)box.scrollLeft+=12;
+    const el=document.elementFromPoint(ev.clientX,r.top+r.height/2),tg=el&&el.closest(sel);
+    if(tg&&tg!==it&&box.contains(tg)){const tr=tg.getBoundingClientRect();box.insertBefore(it,ev.clientX<tr.left+tr.width/2?tg:tg.nextSibling);}
+  });
+  box.addEventListener('touchmove',ev=>{if(active)ev.preventDefault();},{passive:false});
+  const end=()=>{
+    if(!it)return;const was=active;reset();dragging=false;
+    if(was){
+      const ids=idsNow();if(ids.join()!==orig)onDrop(ids);
+      const stop=e=>{e.stopPropagation();e.preventDefault();};
+      window.addEventListener('click',stop,true);setTimeout(()=>window.removeEventListener('click',stop,true),350);
+      renderPending=false;render();
+    }else if(renderPending){renderPending=false;render();}
+  };
+  box.addEventListener('pointerup',end);
+  box.addEventListener('pointercancel',()=>{if(active)end();else reset();});
+  box.addEventListener('contextmenu',ev=>{if(ev.target.closest(sel))ev.preventDefault();});
+}
+const setOrder=ids=>ids.forEach((id,k)=>{const x=st.items[id];if(x&&x.d.order!==k){x.d={...x.d,order:k};put(x);}});
+enableDrag($('#subs'),'.chip[data-s]',ids=>{
+  const e=curEnt();if(!e)return;
+  if(e.d.subOrder!=='manual'){e.d={...e.d,subOrder:'manual'};put(e);}
+  setOrder(ids);toast('Orden manual guardado');
+});
+enableDrag($('#tabs'),'button[data-e]',ids=>setOrder(ids));
 
 /* ---------- Botón Atrás (Android): cascada + doble toque para salir ----------
    Método principal: CloseWatcher (Chrome Android), que ataja Atrás aun sin toque previo.
