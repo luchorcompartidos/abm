@@ -14,6 +14,8 @@ header{position:sticky;top:0;z-index:5;background:var(--card);box-shadow:0 1px 4
 .bar{background:var(--pri);color:#fff;padding:env(safe-area-inset-top) 6px 0 14px}
 .top{display:flex;align-items:center;gap:4px;height:48px}
 .top h1{font-size:18px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ver{background:rgba(255,255,255,.2);border:0;color:#fff;font-size:11px;padding:2px 8px;border-radius:9px;vertical-align:middle;font-weight:600}
+.rel{border-top:1px solid var(--bd);padding:10px 0}.rel b{color:var(--pri)}.rel pre{white-space:pre-wrap;font:inherit;font-size:14px;margin:4px 0 0}
 .top small{display:block;font-size:11px;font-weight:400;opacity:.8}
 .ib{background:none;border:0;color:inherit;font-size:21px;width:42px;height:42px;border-radius:50%;position:relative}
 .ib:active{background:rgba(255,255,255,.18)}
@@ -53,7 +55,7 @@ main{padding:10px}
 .sheet label.ck{display:flex;gap:8px;align-items:center;color:var(--tx);font-size:16px}.sheet label.ck input{width:auto}
 .row{display:flex;gap:8px;margin-top:14px}.row>*{flex:1}
 .row.sm{margin-top:6px}.row.sm .btn{padding:7px;font-size:14px}
-.btn{padding:12px 14px;border-radius:10px;border:0;font-size:15px;background:var(--pri2);color:var(--tx);text-align:left}
+.btn{display:block;text-decoration:none;padding:12px 14px;border-radius:10px;border:0;font-size:15px;background:var(--pri2);color:var(--tx);text-align:left}
 .row .btn{text-align:center}
 .btn.p{background:var(--pri);color:#fff}.btn.d{background:none;color:var(--err)}
 .acts{display:flex;flex-direction:column;gap:7px;margin-top:10px}
@@ -68,7 +70,7 @@ main{padding:10px}
 <header>
   <div class="bar">
     <div class="top">
-      <h1>Registros<small id="sinfo"></small></h1>
+      <h1>Registros <button class="ver" id="verBtn" title="Versión">v—</button><small id="sinfo"></small></h1>
       <button class="ib" id="syncBtn" title="Sincronizar"><span>🔄</span><i class="dot" id="dot"></i></button>
       <button class="ib" id="cfgBtn" title="Sincronización y datos">⚙️</button>
     </div>
@@ -595,6 +597,35 @@ window.addEventListener('popstate',()=>{
 });
 document.addEventListener('pointerdown',()=>{if(!armed){exitUntil=0;arm();}},true);
 arm();
+
+/* ---------- Versión y Changelog (desde las Releases de GitHub) ---------- */
+const REPO='luchorcompartidos/abm';
+let rels=null;try{rels=JSON.parse(localStorage.getItem('abmRels')||'null');}catch(e){}
+const fmtDT=s=>new Date(s).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+function showVer(){$('#verBtn').textContent=rels&&rels[0]?rels[0].tag:'v—';}
+async function loadRels(){
+  try{
+    const r=await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=50`,{headers:{Accept:'application/vnd.github+json'}});
+    if(!r.ok)return;
+    rels=(await r.json()).filter(x=>!x.draft).map(x=>({tag:x.tag_name,date:x.published_at||x.created_at,body:x.body||'',url:x.html_url}))
+      .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    localStorage.setItem('abmRels',JSON.stringify(rels));showVer();
+  }catch(e){}
+}
+function openVer(){
+  const r=rels&&rels[0];
+  const ov=modal(`<h2>Versión ${esc(r?r.tag:'desconocida')}</h2>
+    <p>${r?'Publicada el <b>'+fmtDT(r.date)+'</b>':'Todavía no se pudo consultar la versión (requiere conexión).'}</p>
+    <div class="acts"><button class="btn" id="vLog">📋 Changelog</button><button class="btn" data-x>Cerrar</button></div>`,true);
+  ov.querySelector('#vLog').onclick=()=>{close(ov);openLog();};
+}
+function openLog(){
+  const list=(rels||[]).map(r=>`<div class="rel"><b>${esc(r.tag)}</b> · <span class="meta">${fmtDT(r.date)}</span>${r.body?`<pre>${esc(r.body)}</pre>`:''}</div>`).join('');
+  modal(`<h2>Changelog</h2>${list||'<p class="meta">Sin datos todavía (requiere conexión).</p>'}
+    <div class="acts"><a class="btn" href="https://github.com/${REPO}/releases" target="_blank" rel="noopener">Ver Releases en GitHub ↗</a><button class="btn" data-x>Cerrar</button></div>`,true);
+}
+$('#verBtn').onclick=openVer;
+showVer();loadRels();
 
 render();
 sync(false);
