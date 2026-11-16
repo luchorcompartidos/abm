@@ -607,7 +607,13 @@ async function loadRels(){
   try{
     const r=await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=50`,{headers:{Accept:'application/vnd.github+json'}});
     if(!r.ok)return;
-    rels=(await r.json()).filter(x=>!x.draft).map(x=>({tag:x.tag_name,date:x.published_at||x.created_at,body:x.body||'',url:x.html_url}))
+    const api=u=>fetch(`https://api.github.com/repos/${REPO}/${u}`,{headers:{Accept:'application/vnd.github+json'}}).then(x=>x.ok?x.json():[]).catch(()=>[]);
+    const [tags,commits]=await Promise.all([api('tags?per_page=100'),api('commits?per_page=100')]);
+    const cDate={},tSha={};
+    (commits||[]).forEach(c=>cDate[c.sha]=c.commit&&(c.commit.committer||c.commit.author).date);
+    (tags||[]).forEach(t=>tSha[t.name]=t.commit&&t.commit.sha);
+    // Fecha de los archivos = fecha del último commit incluido en la Release
+    rels=(await r.json()).filter(x=>!x.draft).map(x=>({tag:x.tag_name,date:cDate[tSha[x.tag_name]]||x.published_at||x.created_at,body:x.body||'',url:x.html_url}))
       .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
     localStorage.setItem('abmRels',JSON.stringify(rels));showVer();
   }catch(e){}
@@ -615,7 +621,7 @@ async function loadRels(){
 function openVer(){
   const r=rels&&rels[0];
   const ov=modal(`<h2>Versión ${esc(r?r.tag:'desconocida')}</h2>
-    <p>${r?'Publicada el <b>'+fmtDT(r.date)+'</b>':'Todavía no se pudo consultar la versión (requiere conexión).'}</p>
+    <p>${r?'Archivos actualizados el <b>'+fmtDT(r.date)+'</b>':'Todavía no se pudo consultar la versión (requiere conexión).'}</p>
     <div class="acts"><button class="btn" id="vLog">📋 Changelog</button><button class="btn" data-x>Cerrar</button></div>`,true);
   ov.querySelector('#vLog').onclick=()=>{close(ov);openLog();};
 }
