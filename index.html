@@ -327,6 +327,7 @@ function openMenu(){
   const e=curEnt(),s=curSub(e);if(!e)return;const L=esc(subLbl(e));
   const ov=modal(`<h2>${esc(e.d.name)}${s?' › '+esc(s.d.name):''}</h2><div class="acts">
     ${s?`<button class="btn" data-a="renSub">✏️ Renombrar ${L}</button>
+    <button class="btn" data-a="mvSub">📦 Mover o copiar ${L} a otra pestaña</button>
     <div class="row sm"><button class="btn" data-a="subL">⬅️ Mover ${L}</button><button class="btn" data-a="subR">Mover ${L} ➡️</button></div>
     <button class="btn d" data-a="delSub">🗑 Eliminar ${L} “${esc(s.d.name)}” y sus registros</button><hr>`:''}
     ${e.d.subOrder==='manual'?`<button class="btn" data-a="autoOrd">🔢 Volver al orden automático de ${L}s (por cantidad)</button>`:''}
@@ -344,8 +345,79 @@ function openMenu(){
     if(k==='delEnt'&&confirm(`¿Eliminar la pestaña “${e.d.name}” con todas sus sub-pestañas y registros?`)){del(e);ui.ent=null;toast('Pestaña eliminada');}
     close(ov);render();
     if(k==='cfgEnt')cfgEnt(e);
+    if(k==='mvSub'&&s)openMoveSub(e,s);
   });
 }
+/* ---------- Mover o copiar una sub-pestaña a otra pestaña ---------- */
+const mapFields=(e,t)=>(e.d.fields||[]).map(sf=>({sf,tf:(t.d.fields||[]).find(f=>f.k===sf.k)||(t.d.fields||[]).find(f=>f.l.trim().toLowerCase()===sf.l.trim().toLowerCase())}));
+function freeName(t,base,skipId){
+  const used=n=>subsOf(t.id).some(x=>x.id!==skipId&&x.d.name.toLowerCase()===n.toLowerCase());
+  if(!used(base))return base;let n=`${base} (copia)`,i=2;while(used(n))n=`${base} (copia ${i++})`;return n;
+}
+function openMoveSub(e,s){
+  const recs=recsOf(s.id);
+  const ov=modal(`<h2>Mover o copiar “${esc(s.d.name)}”</h2>
+    <p class="meta">Está en la pestaña “${esc(e.d.name)}” y tiene ${recs.length} registro(s).</p>
+    <label>Qué hacer</label><select id="mAct">
+      <option value="move">Mover a otra pestaña, con sus registros</option>
+      <option value="copyRec">Copiar, con copia idéntica de sus registros</option>
+      <option value="copy">Copiar solo la sub-pestaña (vacía)</option></select>
+    <label>Pestaña destino</label><select id="mDst"></select>
+    <label>Nombre en el destino</label><input id="mName">
+    <label class="ck"><input type="checkbox" id="mAdd" checked> Agregar a la pestaña destino los campos que le falten</label>
+    <p class="meta" id="mInfo"></p>
+    <div class="row"><button class="btn" data-x>Cancelar</button><button class="btn p" id="mGo">Aceptar</button></div>`);
+  const q=x=>ov.querySelector(x);let touched=false;
+  const upd=()=>{
+    const t=st.items[q('#mDst').value];
+    if(!t){q('#mInfo').textContent='No hay otra pestaña de destino. Creala primero con ＋.';q('#mGo').disabled=true;return;}
+    q('#mGo').disabled=false;
+    if(!touched)q('#mName').value=freeName(t,s.d.name,q('#mAct').value==='move'?s.id:null);
+    if(t.id===e.id){q('#mInfo').textContent='Se crea una copia dentro de esta misma pestaña.';return;}
+    const miss=mapFields(e,t).filter(m=>!m.tf).map(m=>m.sf.l);
+    q('#mInfo').innerHTML=miss.length?`Campos que no existen en “${esc(t.d.name)}”: <b>${miss.map(esc).join(', ')}</b>. `+(q('#mAdd').checked?'Se van a agregar a esa pestaña.':'Sus datos se conservan, pero no se ven hasta que agregues esos campos.'):'Todos los campos coinciden con la pestaña destino.';
+  };
+  const fill=()=>{
+    const act=q('#mAct').value,cur=q('#mDst').value;
+    const opts=ents().filter(x=>act!=='move'||x.id!==e.id);
+    q('#mDst').innerHTML=opts.map(x=>`<option value="${x.id}" ${x.id===cur?'selected':''}>${esc(x.d.name)}${x.id===e.id?' (esta misma)':''}</option>`).join('');
+    upd();
+  };
+  q('#mAct').onchange=fill;q('#mDst').onchange=upd;q('#mAdd').onchange=upd;q('#mName').oninput=()=>{touched=true;};
+  fill();
+  q('#mGo').onclick=()=>{
+    const act=q('#mAct').value,t=st.items[q('#mDst').value],name=q('#mName').value.trim();
+    if(!t)return;if(!name){toast('Poné un nombre');return;}
+    if(subsOf(t.id).some(x=>x.id!==s.id&&x.d.name.toLowerCase()===name.toLowerCase())){toast(`Ya existe “${name}” en “${t.d.name}”`);return;}
+    const n=act==='copy'?0:recs.length;
+    const verb=act==='move'?'Mover':'Copiar';
+    if(!confirm(`¿${verb} “${s.d.name}”${n?` con ${n} registro(s)`:''} a la pestaña “${t.d.name}” como “${name}”?`))return;
+    // Campos: emparejar por clave o por nombre; opcionalmente agregar los faltantes al destino
+    const kmap={};
+    if(t.id!==e.id){
+      const tf=[...(t.d.fields||[])];let added=false;
+      mapFields(e,t).forEach(m=>{
+        if(m.tf){kmap[m.sf.k]=m.tf.k;return;}
+        if(!q('#mAdd').checked)return;
+        let k=m.sf.k;if(tf.some(f=>f.k===k))k='f_'+uid().slice(0,8);
+        tf.push({...JSON.parse(JSON.stringify(m.sf)),k,main:0});kmap[m.sf.k]=k;added=true;
+      });
+      if(added){t.d={...t.d,fields:tf};put(t);}
+    }
+    const conv=d=>{const nd={};Object.keys(d).forEach(k=>{if(!(k in kmap))nd[k]=d[k];});Object.keys(d).forEach(k=>{if(k in kmap)nd[kmap[k]]=d[k];});return nd;};
+    const order=subsOf(t.id).length;let sid;
+    if(act==='move'){
+      s.parentId=t.id;s.entityId=t.id;s.d={...s.d,name,order};put(s);sid=s.id;
+      recs.forEach(r=>{r.entityId=t.id;r.d=conv(r.d);put(r);});
+    }else{
+      const ns={id:uid(),kind:'subtab',parentId:t.id,entityId:t.id,deleted:0,d:{name,order}};put(ns);sid=ns.id;
+      if(act==='copyRec')recs.forEach(r=>put({id:uid(),kind:'record',parentId:ns.id,entityId:t.id,deleted:0,d:conv(JSON.parse(JSON.stringify(r.d)))}));
+    }
+    ui.ent=t.id;ui.sub[t.id]=sid;save();close(ov);render();
+    toast(act==='move'?'Sub-pestaña movida':'Sub-pestaña copiada');
+  };
+}
+
 function cfgEnt(e){
   let F=JSON.parse(JSON.stringify(e.d.fields||[]));
   const ov=modal(`<h2>Configurar pestaña</h2>
