@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-version" content="v0.5.0">
+<meta name="app-version" content="v0.5.1">
 <meta name="theme-color" content="#1f5f9e">
 <title>Registros ABM</title>
 <style>
@@ -20,6 +20,10 @@ header{position:sticky;top:0;z-index:5;background:var(--card);box-shadow:0 1px 4
 .upd{display:none;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px;background:#f59e0b;color:#1c1f26;font-size:14px}.upd.on{display:flex}.upd button{border:0;border-radius:8px;padding:6px 12px;background:#1c1f26;color:#fff;font-size:14px}
 .pv{white-space:pre-wrap;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:8px;font:inherit;font-size:14px;margin:4px 0;max-height:30vh;overflow:auto}.pv.new{border-color:var(--ok);border-width:2px}
 .grp{border:1px solid var(--bd);border-radius:10px;padding:6px 10px;margin-top:6px}.sheet .grp label.ck,.sheet #bE label.ck{margin:7px 0}
+.agbar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--bd);box-shadow:0 -2px 8px rgba(0,0,0,.12);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:none;gap:8px;z-index:7;align-items:center;flex-wrap:wrap}
+.agbar.on{display:flex}.agbar .btn{padding:9px 12px;font-size:14px;text-align:center}.agbar .grow{flex:1;font-size:14px;color:var(--mut)}
+.card.sel{border-color:var(--pri);background:var(--pri2)}.agck{float:right;width:20px;height:20px;pointer-events:none;margin:0 0 0 8px}
+.count .btn{display:inline-block;padding:5px 10px;font-size:13px;margin-left:8px;vertical-align:middle}
 .rel{border-top:1px solid var(--bd);padding:10px 0}.rel b{color:var(--pri)}.rel pre{white-space:pre-wrap;font:inherit;font-size:14px;margin:4px 0 0}
 .top small{display:block;font-size:11px;font-weight:400;opacity:.8}
 .ib{background:none;border:0;color:inherit;font-size:21px;width:42px;height:42px;border-radius:50%;position:relative}
@@ -99,6 +103,7 @@ main{padding:10px}
 </header>
 <main id="list"></main>
 <button class="fab" id="fab" title="Nuevo registro">＋</button>
+<div class="agbar" id="agBar"></div>
 <div id="toast"></div>
 
 <script>
@@ -175,7 +180,7 @@ function mergeRemote(it){ // viene de la Sheet
 }
 
 /* ---------- Estado de UI ---------- */
-function curEnt(){const es=ents();const e=es.find(x=>x.id===ui.ent)||es[0];ui.ent=e&&e.id;return e;}
+function curEnt(){if(ui.ent==='_agenda')return null;const es=ents();const e=es.find(x=>x.id===ui.ent)||es[0];ui.ent=e&&e.id;return e;}
 function curSub(e){
   if(!e)return null;const ss=shownSubs(e);const s=ss.find(x=>x.id===ui.sub[e.id])||ss[0];
   if(s)ui.sub[e.id]=s.id;return s;
@@ -193,13 +198,24 @@ function shownSubs(e,c){ // automático: más registros primero, luego A→Z; ma
 }
 function render(){
   if(dragging){renderPending=true;return;}
-  const c=countsBySub(),e=curEnt(),s=curSub(e);
+  const c=countsBySub(),ag=isAg(),A=agendaItems(),e=curEnt(),s=curSub(e);
   const tot=x=>subsOf(x.id).reduce((n,sb)=>n+(c[sb.id]||0),0);
-  $('#tabs').innerHTML=ents().map(x=>`<button data-e="${x.id}" class="${e&&x.id===e.id?'on':''}">${esc(x.d.name)}<small>${tot(x)}</small></button>`).join('')
+  $('#tabs').innerHTML=`<button data-act="agenda" class="${ag?'on':''}">📅 Agenda<small>${A.hoy.length}</small></button>`
+    +ents().map(x=>`<button data-e="${x.id}" class="${e&&x.id===e.id?'on':''}">${esc(x.d.name)}<small>${tot(x)}</small></button>`).join('')
     +`<button data-act="newEnt" title="Nueva pestaña">＋</button>`;
-  $('#subs').innerHTML=e?shownSubs(e,c).map(x=>{const n=c[x.id]||0;return `<button class="chip ${n?'has':'zero'} ${s&&x.id===s.id?'on':''}" data-s="${x.id}">${esc(x.d.name)}<small>${n}</small></button>`;}).join('')
-    +`<button class="chip add" data-act="newSub">＋ ${esc(subLbl(e))}</button><button class="chip" data-act="menu" title="Opciones">⋯</button>`:'';
-  renderTools(e);renderList(e,s);renderDot();
+  if(ag){
+    const v=ui.agView==='des'?'des':'hoy';
+    $('#subs').innerHTML=`<button class="chip ${A.hoy.length?'has':'zero'} ${v==='hoy'?'on':''}" data-act="agHoy">Del día y vencidos<small>${A.hoy.length}</small></button>`
+      +`<button class="chip ${A.des.length?'has':'zero'} ${v==='des'?'on':''}" data-act="agDes">Postergados/Desestimados<small>${A.des.length}</small></button>`;
+    $('#tools').style.display='none';$('#fab').hidden=true;
+    renderAgList(A[v],v);
+  }else{
+    $('#subs').innerHTML=e?shownSubs(e,c).map(x=>{const n=c[x.id]||0;return `<button class="chip ${n?'has':'zero'} ${s&&x.id===s.id?'on':''}" data-s="${x.id}">${esc(x.d.name)}<small>${n}</small></button>`;}).join('')
+      +`<button class="chip add" data-act="newSub">＋ ${esc(subLbl(e))}</button><button class="chip" data-act="menu" title="Opciones">⋯</button>`:'';
+    renderTools(e);renderList(e,s);
+  }
+  $('#agBar').classList.toggle('on',ag&&agSelMode);
+  renderDot();
   requestAnimationFrame(updArrows);
 }
 function renderTools(e){
@@ -290,7 +306,7 @@ function fieldHtml(f,v){
   return `<label>${esc(f.l)}${f.main?' *':''}</label>${h}`;
 }
 function openRec(id){
-  const e=curEnt(),s=curSub(e),r=id?st.items[id]:null;if(!e||!s)return;
+  const r=id?st.items[id]:null,e=r?st.items[r.entityId]:curEnt(),s=r?st.items[r.parentId]:curSub(e);if(!e||!s)return;
   const F=e.d.fields||[],d=r?r.d:defaults(e,s);
   const ov=modal(`<h2>${r?'Editar':'Nuevo'} registro</h2>
     <label>${esc(subLbl(e))}</label><select id="fSub">${subsOf(e.id).map(x=>`<option value="${x.id}" ${x.id===(r?r.parentId:s.id)?'selected':''}>${esc(x.d.name)}</option>`).join('')}</select>
@@ -598,12 +614,86 @@ function undoOp(o){
   return true;
 }
 
+/* ---------- Agenda: Del día y vencidos / Postergados-Desestimados ---------- */
+const isAg=()=>ui.ent==='_agenda';
+const todayStr=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
+const agFields=e=>Array.isArray(e.d.agenda)?e.d.agenda:(e.id==='ent_backlog'?['fechaObjetivo']:[]);
+function agDate(e,r){for(const k of agFields(e)){const v=r.d[k];if(/^\d{4}-\d{2}-\d{2}$/.test(v||''))return v;}return '';}
+const estadoDe=r=>String(r.d.estado||'').trim().toLowerCase();
+function agendaItems(){
+  const t=todayStr(),hoy=[],des=[];
+  ents().forEach(e=>{if(!agFields(e).length)return;
+    subsOf(e.id).forEach(s=>recsOf(s.id).forEach(r=>{
+      const d=agDate(e,r);if(!d||d>t)return;
+      const est=estadoDe(r);if(est==='hecho')return;
+      const ds=r.d._agDesest;
+      if(ds&&ds.f===d){des.push({e,s,r,d});return;}   // desestimado para esta misma fecha
+      if(est==='descartado')return;
+      hoy.push({e,s,r,d});
+    }));
+  });
+  hoy.sort((a,b)=>a.d.localeCompare(b.d));
+  des.sort((a,b)=>(b.r.d._agDesest.at||0)-(a.r.d._agDesest.at||0));
+  return {hoy,des};
+}
+let agSelMode=false;const agSel=new Set();
+function agCard(x,v){
+  const days=Math.round((Date.parse(todayStr())-Date.parse(x.d))/864e5);
+  const when=days<=0?'Hoy':`Vencido hace ${days} día${days>1?'s':''}`;
+  const extra=v==='des'&&x.r.d._agDesest.at?` · desestimado el ${fmtDT(x.r.d._agDesest.at)}`:'';
+  const sel=agSel.has(x.r.id),id=x.r.id;
+  return card(x.e,x.r).replace(`<div class="card" data-r="${id}">`,
+    `<div class="card ${sel?'sel':''}" ${agSelMode?'data-asel':'data-r'}="${id}">${agSelMode?`<input type="checkbox" class="agck" ${sel?'checked':''} tabindex="-1">`:''}`
+    +`<div class="meta">📅 ${fmtD(x.d)} · <b>${when}</b> · ${esc(x.e.d.name)} › ${esc(x.s.d.name)}${extra}</div>`);
+}
+function renderAgList(list,v){
+  const L=$('#list');
+  [...agSel].forEach(id=>{if(!list.some(x=>x.r.id===id))agSel.delete(id);});
+  if(!list.length){agSelMode=false;
+    L.innerHTML=`<div class="empty">${v==='hoy'?'No hay registros con fecha de hoy o vencida.<br><br><span class="meta">Los campos de fecha se eligen en cada pestaña: ⋯ → Configurar pestaña → Agenda.</span>':'No hay registros postergados ni desestimados.'}</div>`;
+  }else{
+    L.innerHTML=`<div class="count">${list.length} registro${list.length>1?'s':''}<button class="btn" data-act="agSel">${agSelMode?'Cancelar selección':'☑️ Seleccionar'}</button></div>`+list.map(x=>agCard(x,v)).join('');
+  }
+  $('#agBar').innerHTML=`<span class="grow">${agSel.size} seleccionado${agSel.size===1?'':'s'}</span>
+    <button class="btn" data-act="agAll">${agSel.size===list.length&&list.length?'Ninguno':'Todos'}</button>
+    ${v==='hoy'?`<button class="btn p" data-act="agDismiss" ${agSel.size?'':'disabled'}>Desestimar</button>`
+      :`<button class="btn p" data-act="agRestore" ${agSel.size?'':'disabled'}>Volver a Del día</button>`}
+    <button class="btn" data-act="agSel">✕</button>`;
+}
+function agAction(a){
+  const A=agendaItems(),v=ui.agView==='des'?'des':'hoy',list=A[v];
+  if(a==='agenda'){agSelMode=false;agSel.clear();ui.ent='_agenda';save();render();$('#subs').scrollLeft=0;window.scrollTo(0,0);return;}
+  if(a==='agHoy'||a==='agDes'){agSelMode=false;agSel.clear();ui.agView=a==='agDes'?'des':'hoy';save();render();window.scrollTo(0,0);return;}
+  if(a==='agSel'){agSelMode=!agSelMode;agSel.clear();render();return;}
+  if(a==='agAll'){if(agSel.size===list.length)agSel.clear();else list.forEach(x=>agSel.add(x.r.id));render();return;}
+  const sel=list.filter(x=>agSel.has(x.r.id));if(!sel.length)return;
+  if(a==='agDismiss'){
+    if(!confirm(`¿Desestimar ${sel.length} registro(s)? Pasan a “Postergados/Desestimados” y vuelven a la Agenda solo si se les cambia la fecha.`))return;
+    sel.forEach(x=>{x.r.d={...x.r.d,_agDesest:{f:x.d,at:now()}};put(x.r);});
+    toast(`${sel.length} desestimado(s)`);
+  }
+  if(a==='agRestore'){
+    if(!confirm(`¿Volver ${sel.length} registro(s) a “Del día y vencidos”?`))return;
+    sel.forEach(x=>{const d={...x.r.d};delete d._agDesest;x.r.d=d;put(x.r);});
+    toast(`${sel.length} devuelto(s) a Del día`);
+  }
+  agSelMode=false;agSel.clear();render();
+}
+$('#list').addEventListener('click',ev=>{
+  const c=ev.target.closest('[data-asel]');if(!c)return;
+  const id=c.dataset.asel;agSel.has(id)?agSel.delete(id):agSel.add(id);render();
+});
+let lastDay=todayStr();
+function checkDay(){const t=todayStr();if(t!==lastDay){lastDay=t;render();}}
 function cfgEnt(e){
   let F=JSON.parse(JSON.stringify(e.d.fields||[]));
   const ov=modal(`<h2>Configurar pestaña</h2>
     <label>Nombre de la pestaña</label><input id="cName" value="${esc(e.d.name)}">
     <label>Cómo se llaman sus sub-pestañas (ej.: App, Cliente, Grupo)</label><input id="cSub" value="${esc(e.d.subLabel||'')}">
     <label>Prefijo del código automático (si hay un campo “Código”)</label><input id="cPre" value="${esc(e.d.prefix||'')}">
+    ${(()=>{const D=(e.d.fields||[]).filter(f=>f.t==='date'),cur=agFields(e);
+      return `<h3>Agenda 📅</h3><p class="meta">Campos de fecha que alimentan la Agenda, por prioridad: si el de prioridad 1 está vacío se usa el 2, y así. Si agregás campos de fecha nuevos, guardá y volvé a abrir esta pantalla para verlos acá.</p>`
+        +[0,1,2].map(i=>`<label>Prioridad ${i+1}</label><select data-agp><option value="">(ninguno)</option>${D.map(f=>`<option value="${esc(f.k)}" ${cur[i]===f.k?'selected':''}>${esc(f.l)}</option>`).join('')}</select>`).join('');})()}
     <h3>Campos</h3><div id="cF"></div>
     <div class="acts"><button class="btn" id="cAdd">＋ Agregar campo</button></div>
     <p class="meta">★ marca el campo que se muestra como título. Quitar un campo no borra los datos ya cargados.</p>
@@ -627,7 +717,8 @@ function cfgEnt(e){
   ov.querySelector('#cSave').onclick=()=>{
     const n=ov.querySelector('#cName').value.trim();if(!n){toast('Poné un nombre');return;}
     F=F.filter(f=>f.l.trim());F.forEach(f=>f.l=f.l.trim());
-    e.d={...e.d,name:n,subLabel:ov.querySelector('#cSub').value.trim(),prefix:ov.querySelector('#cPre').value.trim(),fields:F};
+    e.d={...e.d,name:n,subLabel:ov.querySelector('#cSub').value.trim(),prefix:ov.querySelector('#cPre').value.trim(),fields:F,
+      agenda:[...ov.querySelectorAll('[data-agp]')].map(x=>x.value).filter((k,i,a)=>k&&a.indexOf(k)===i&&F.some(f=>f.k===k&&f.t==='date'))};
     put(e);close(ov);render();toast('Pestaña actualizada');
   };
 }
@@ -836,10 +927,11 @@ function openCfg(){
 document.addEventListener('click',ev=>{
   if(ev.target.closest('.ov'))return;
   const t=ev.target.closest('[data-e],[data-s],[data-act],[data-r]');if(!t)return;
-  if(t.dataset.e){ui.ent=t.dataset.e;save();render();$('#subs').scrollLeft=0;window.scrollTo(0,0);return;}
+  if(t.dataset.e){agSelMode=false;agSel.clear();ui.ent=t.dataset.e;save();render();$('#subs').scrollLeft=0;window.scrollTo(0,0);return;}
   if(t.dataset.s){const e=curEnt();if(e){ui.sub[e.id]=t.dataset.s;save();render();window.scrollTo(0,0);}return;}
   if(t.dataset.r){openRec(t.dataset.r);return;}
   const a=t.dataset.act;
+  if(a&&a.startsWith('ag')){agAction(a);return;}
   if(a==='newEnt')newEnt();if(a==='newSub')newSub();if(a==='menu')openMenu();
 });
 $('#fab').onclick=()=>openRec(null);
@@ -850,7 +942,8 @@ $('#flt').onchange=ev=>{const e=curEnt();ui.flt[e.id]=ev.target.value;save();ren
 $('#srt').onchange=ev=>{const e=curEnt();ui.srt[e.id]=ev.target.value;save();renderList(e,curSub(e));};
 window.addEventListener('online',()=>{renderDot();sync(false);});
 window.addEventListener('offline',()=>renderDot());
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')sync(false);});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){checkDay();sync(false);}});
+setInterval(checkDay,60000);
 setInterval(()=>{if(document.visibilityState==='visible')sync(false);},120000);
 window.addEventListener('storage',ev=>{if(ev.key===LS){st=load();render();}});
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
@@ -924,6 +1017,7 @@ let exitUntil=0,exitTimer=null;
 function backStep(){ // 'stay' = se manejó y se sigue atajando; 'warn' = se mostró el aviso; 'exit' = dejar salir
   const ovs=document.querySelectorAll('.ov');
   if(ovs.length){close(ovs[ovs.length-1]);return 'stay';}                  // 1) cerrar formulario o menú
+  if(isAg()&&agSelMode){agSelMode=false;agSel.clear();render();return 'stay';}  // cancelar selección
   if(ui.q){ui.q='';save();render();return 'stay';}                          // 2) limpiar búsqueda
   const es=ents(),e=curEnt();
   if(es.length&&e&&e.id!==es[0].id){ui.ent=es[0].id;save();render();window.scrollTo(0,0);return 'stay';} // 3) volver a la 1ra pestaña
@@ -1013,6 +1107,15 @@ function openLog(){
 $('#verBtn').onclick=openVer;
 $('#updBtn').onclick=recargar;
 showVer();loadRels();
+
+// Una única vez (implementación inicial): los "Descartado" con fecha hasta el 17/11/2026 pasan a Postergados/Desestimados
+if(!st.meta.agMig1){
+  ents().forEach(e=>subsOf(e.id).forEach(s=>recsOf(s.id).forEach(r=>{
+    const d=agDate(e,r);
+    if(d&&d<='2026-11-17'&&estadoDe(r)==='descartado'&&!(r.d._agDesest&&r.d._agDesest.f===d)){r.d={...r.d,_agDesest:{f:d,at:now(),mig:1}};put(r);}
+  })));
+  st.meta.agMig1=1;save();
+}
 
 render();
 sync(false);
