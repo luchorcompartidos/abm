@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-version" content="v0.4.1">
+<meta name="app-version" content="v0.5.0">
 <meta name="theme-color" content="#1f5f9e">
 <title>Registros ABM</title>
 <style>
@@ -18,6 +18,8 @@ header{position:sticky;top:0;z-index:5;background:var(--card);box-shadow:0 1px 4
 .ver{background:rgba(255,255,255,.2);border:0;color:#fff;font-size:11px;padding:2px 8px;border-radius:9px;vertical-align:middle;font-weight:600}
 .ver.new{background:#f59e0b}
 .upd{display:none;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px;background:#f59e0b;color:#1c1f26;font-size:14px}.upd.on{display:flex}.upd button{border:0;border-radius:8px;padding:6px 12px;background:#1c1f26;color:#fff;font-size:14px}
+.pv{white-space:pre-wrap;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:8px;font:inherit;font-size:14px;margin:4px 0;max-height:30vh;overflow:auto}.pv.new{border-color:var(--ok);border-width:2px}
+.grp{border:1px solid var(--bd);border-radius:10px;padding:6px 10px;margin-top:6px}.sheet .grp label.ck,.sheet #bE label.ck{margin:7px 0}
 .rel{border-top:1px solid var(--bd);padding:10px 0}.rel b{color:var(--pri)}.rel pre{white-space:pre-wrap;font:inherit;font-size:14px;margin:4px 0 0}
 .top small{display:block;font-size:11px;font-weight:400;opacity:.8}
 .ib{background:none;border:0;color:inherit;font-size:21px;width:42px;height:42px;border-radius:50%;position:relative}
@@ -261,7 +263,7 @@ function modal(html,light){
   ov.addEventListener('click',ev=>{if((light&&ev.target===ov)||ev.target.closest('[data-x]'))close(ov);});
   document.body.appendChild(ov);document.body.style.overflow='hidden';return ov;
 }
-function close(ov){ov.remove();if(!document.querySelector('.ov'))document.body.style.overflow='';}
+function close(ov){if(ov._fin){const f=ov._fin;ov._fin=null;f();}ov.remove();if(!document.querySelector('.ov'))document.body.style.overflow='';}
 let tt;function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('on'),2600);}
 
 /* ---------- ABM de registros ---------- */
@@ -332,6 +334,7 @@ function openMenu(){
   const ov=modal(`<h2>${esc(e.d.name)}${s?' › '+esc(s.d.name):''}</h2><div class="acts">
     ${s?`<button class="btn" data-a="renSub">✏️ Renombrar ${L}</button>
     <button class="btn" data-a="mvSub">📦 Mover o copiar ${L} a otra pestaña</button>
+    <button class="btn" data-a="bulk">🔀 Copiar o mover datos entre campos</button>
     <div class="row sm"><button class="btn" data-a="subL">⬅️ Mover ${L}</button><button class="btn" data-a="subR">Mover ${L} ➡️</button></div>
     <button class="btn d" data-a="delSub">🗑 Eliminar ${L} “${esc(s.d.name)}” y sus registros</button><hr>`:''}
     ${e.d.subOrder==='manual'?`<button class="btn" data-a="autoOrd">🔢 Volver al orden automático de ${L}s (por cantidad)</button>`:''}
@@ -350,6 +353,7 @@ function openMenu(){
     close(ov);render();
     if(k==='cfgEnt')cfgEnt(e);
     if(k==='mvSub'&&s)openMoveSub(e,s);
+    if(k==='bulk')openBulk(e.id,s&&s.id);
   });
 }
 /* ---------- Mover o copiar una sub-pestaña a otra pestaña ---------- */
@@ -420,6 +424,178 @@ function openMoveSub(e,s){
     ui.ent=t.id;ui.sub[t.id]=sid;save();close(ov);render();
     toast(act==='move'?'Sub-pestaña movida':'Sub-pestaña copiada');
   };
+}
+
+/* ---------- Copiar o mover datos entre campos (masivo) ---------- */
+const SEPS=[['\n| |\n','Salto de línea + | | + salto de línea'],['\n','Salto de línea'],[' · ','Punto medio ( · )'],[' | ','Barra ( | )'],[' ','Espacio']];
+const isEmptyV=v=>v===undefined||v===null||v===''||v===false;
+const showV=v=>v===true?'Sí':String(v??'');
+const fByLabel=(e,l)=>(e.d.fields||[]).find(f=>f.l.trim().toLowerCase()===l);
+const recTitle=(e,r)=>{const m=e&&e.d&&e.d.fields?mainField(e):null;return String((m&&r.d[m.k])||r.d.codigo||'(sin título)');};
+function toType(v,sf,tf){ // convierte el valor de origen al tipo del destino: [ok, valor]
+  const t=tf.t;
+  if(t==='text'||t==='textarea'||t==='select'){
+    if(v===true)return [true,'Sí'];
+    if(sf.t==='date'){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v));if(m)return [true,`${m[3]}/${m[2]}/${m[1]}`];}
+    return [true,String(v)];
+  }
+  if(t==='number'){const s=String(v).trim().replace(',','.');return s!==''&&!isNaN(+s)?[true,+s]:[false];}
+  if(t==='date'){const s=String(v).trim();if(/^\d{4}-\d{2}-\d{2}$/.test(s))return [true,s];
+    const m=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);return m?[true,`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`]:[false];}
+  if(t==='check'){if(v===true||/^(s[ií]|true|1|x|verdadero)$/i.test(String(v).trim()))return [true,true];return [false];}
+  return [false];
+}
+function openBulk(entId,subId){
+  const selE=new Set(entId?[entId]:ents().map(x=>x.id));
+  const selS=new Set(subId?[subId]:ents().flatMap(x=>subsOf(x.id).map(s=>s.id)));
+  const ov=modal(`<h2>Copiar o mover datos entre campos</h2>
+    <label>Pestañas</label><div id="bE"></div>
+    <label>Sub-pestañas</label><div id="bS"></div>
+    <label>Campo origen</label><select id="bF"></select>
+    <label>Campo destino</label><select id="bT"></select>
+    <label>Operación</label><select id="bOp"><option value="copy">Copiar (el origen queda igual)</option><option value="move">Mover (el origen se vacía)</option></select>
+    <label>Si el destino ya tiene datos</label><select id="bMode"><option value="append">Agregar a continuación, revisando caso a caso</option><option value="skip">No tocar esos registros</option></select>
+    <label>Separador al agregar a continuación</label><select id="bSep">${SEPS.map(([v,n],i)=>`<option value="${i}">${esc(n)}</option>`).join('')}</select>
+    <p class="meta">Los registros con el destino vacío se completan directamente. Agregar a continuación solo se aplica a destinos de tipo Texto o Texto largo; con Fecha, Número, Lista o Sí/No, los que ya tienen datos no se tocan.</p>
+    <div class="row"><button class="btn" data-x>Cancelar</button><button class="btn p" id="bGo">Ver vista previa</button></div>`);
+  const q=x=>ov.querySelector(x);
+  const draw=()=>{
+    const es=ents(),on=es.filter(x=>selE.has(x.id));
+    q('#bE').innerHTML=`<label class="ck"><input type="checkbox" data-ae ${es.every(x=>selE.has(x.id))?'checked':''}> <b>Todas</b></label>`
+      +es.map(x=>`<label class="ck"><input type="checkbox" data-be="${x.id}" ${selE.has(x.id)?'checked':''}> ${esc(x.d.name)}</label>`).join('');
+    q('#bS').innerHTML=on.map(x=>{const ss=subsOf(x.id);return `<div class="grp"><b>${esc(x.d.name)}</b>
+      <label class="ck"><input type="checkbox" data-bsa="${x.id}" ${ss.length&&ss.every(s=>selS.has(s.id))?'checked':''}> <b>Todas</b></label>
+      ${ss.map(s=>`<label class="ck"><input type="checkbox" data-bs="${s.id}" ${selS.has(s.id)?'checked':''}> ${esc(s.d.name)} <small class="meta">(${recsOf(s.id).length})</small></label>`).join('')||'<p class="meta">Sin sub-pestañas.</p>'}</div>`;}).join('')
+      ||'<p class="meta">Elegí al menos una pestaña.</p>';
+    const labels=[],seen=new Set();
+    on.forEach(x=>(x.d.fields||[]).forEach(f=>{const l=f.l.trim();if(l&&!seen.has(l.toLowerCase())){seen.add(l.toLowerCase());labels.push(l);}}));
+    const cf=q('#bF').value,ct=q('#bT').value;
+    q('#bF').innerHTML=labels.map(l=>`<option ${l===cf?'selected':''}>${esc(l)}</option>`).join('');
+    q('#bT').innerHTML=labels.map((l,i)=>`<option ${l===ct||(!ct&&i===1)?'selected':''}>${esc(l)}</option>`).join('');
+  };
+  ov.addEventListener('change',ev=>{
+    const t=ev.target,d=t.dataset,set=(S,id)=>t.checked?S.add(id):S.delete(id);
+    if('ae' in d)ents().forEach(x=>{set(selE,x.id);if(t.checked)subsOf(x.id).forEach(s=>selS.add(s.id));});
+    else if(d.be){set(selE,d.be);if(t.checked)subsOf(d.be).forEach(s=>selS.add(s.id));}
+    else if(d.bsa)subsOf(d.bsa).forEach(s=>set(selS,s.id));
+    else if(d.bs)set(selS,d.bs);
+    else return;
+    draw();
+  });
+  draw();
+  q('#bGo').onclick=()=>{
+    const F=q('#bF').value,T=q('#bT').value,fl=F.trim().toLowerCase(),tl=T.trim().toLowerCase();
+    if(!fl||!tl){toast('Elegí los campos');return;}
+    if(fl===tl){toast('El origen y el destino tienen que ser campos distintos');return;}
+    const op=q('#bOp').value,mode=q('#bMode').value,sep=SEPS[+q('#bSep').value][0];
+    const A=[],B=[],cnt={hasData:0,noSrc:0,invalid:0,dup:0,noField:[]};let nSubs=0;
+    ents().filter(x=>selE.has(x.id)).forEach(e=>{
+      const sf=fByLabel(e,fl),tf=fByLabel(e,tl);
+      if(!sf||!tf){cnt.noField.push(e.d.name);return;}
+      subsOf(e.id).filter(s=>selS.has(s.id)).forEach(s=>{nSubs++;recsOf(s.id).forEach(r=>{
+        const v=r.d[sf.k];if(isEmptyV(v)){cnt.noSrc++;return;}
+        const [ok,cv]=toType(v,sf,tf);if(!ok){cnt.invalid++;return;}
+        const dv=r.d[tf.k],x={r,e,s,sf,tf};
+        if(isEmptyV(dv)){A.push({...x,nv:cv});return;}
+        if(mode==='append'&&(tf.t==='text'||tf.t==='textarea')){
+          if(String(dv).includes(String(cv))){cnt.dup++;return;}
+          B.push({...x,nv:String(dv)+sep+String(cv)});return;
+        }
+        cnt.hasData++;
+      });});
+    });
+    const desc=`${op==='move'?'Mover':'Copiar'} “${F}” → “${T}”${mode==='append'?' (agregando a continuación)':''} · ${selE.size} pestaña(s), ${nSubs} sub-pestaña(s)`;
+    close(ov);bulkPreview({A,B,cnt,op,desc});
+  };
+}
+function bulkPreview(P){
+  const {A,B,cnt}=P;
+  const ex=A.slice(0,3).map(x=>`<div class="meta">• ${esc(recTitle(x.e,x.r))}: <b>${esc(showV(x.nv).slice(0,80))}</b></div>`).join('');
+  const ov=modal(`<h2>Vista previa</h2><p><b>${esc(P.desc)}</b></p>
+    <p>Con el destino vacío, se completan: <b>${A.length}</b><br>Con datos en el destino, para revisar uno por uno: <b>${B.length}</b></p>
+    <p class="meta">No se tocan:<br>• destino con datos que no admite agregar (o elegiste no tocarlos): ${cnt.hasData}<br>• origen vacío: ${cnt.noSrc}<br>• valor no compatible con el tipo del destino: ${cnt.invalid}<br>• el destino ya contiene ese mismo texto: ${cnt.dup}
+    ${cnt.noField.length?`<br>• pestañas donde falta alguno de los dos campos: ${cnt.noField.map(esc).join(', ')}`:''}</p>
+    ${ex?`<p class="meta">Ejemplos:</p>${ex}`:''}
+    <div class="acts"><button class="btn" id="pBk">💾 Descargar respaldo .json antes de aplicar</button></div>
+    <div class="row"><button class="btn" data-x>Cancelar</button><button class="btn p" id="pGo" ${A.length+B.length?'':'disabled'}>${B.length?'Aplicar y revisar':'Aplicar'}</button></div>`);
+  ov.querySelector('#pBk').onclick=exportJson;
+  ov.querySelector('#pGo').onclick=()=>{
+    close(ov);const run=bulkRun(P);A.forEach(run.apply);
+    if(B.length)bulkReview(B,run);else run.finish();
+  };
+}
+function bulkRun(P){
+  const ch=[],entsMod=new Set();let done=false;
+  return {op:P.op,
+    apply(x){
+      const r=st.items[x.r.id];if(!r||r.deleted)return;
+      const sb=r.d[x.sf.k],db=r.d[x.tf.k],nd={...r.d,[x.tf.k]:x.nv};
+      if(P.op==='move')nd[x.sf.k]=x.sf.t==='check'?false:'';
+      r.d=nd;put(r);
+      ch.push([r.id,x.sf.k,sb??'',nd[x.sf.k]??'',x.tf.k,db??'',x.nv]);
+      if(x.tf.t==='select'){const v=String(x.nv);if(v&&!(x.tf.o||[]).includes(v)){x.tf.o=[...(x.tf.o||[]),v];entsMod.add(x.e.id);}}
+    },
+    finish(){
+      if(done)return;done=true;
+      entsMod.forEach(id=>{const e=st.items[id];if(e){e.d={...e.d,fields:[...e.d.fields]};put(e);}});
+      if(ch.length){
+        put({id:'op_'+uid().slice(0,12),kind:'oplog',parentId:'',entityId:'',deleted:0,d:{at:now(),dev:devTag(),desc:P.desc,op:P.op,ch,undone:0}});
+        alive('oplog').sort((a,b)=>b.d.at-a.d.at).slice(20).forEach(o=>{o.deleted=1;o.d={at:o.d.at,desc:o.d.desc};put(o);});
+      }
+      render();
+      setTimeout(()=>alert(ch.length?`Listo: ${ch.length} registro(s) modificado(s).\n\nSi hace falta, podés deshacerlo desde ⚙️ → Historial de operaciones masivas.`:'No se modificó ningún registro.'),50);
+    }};
+}
+function bulkReview(B,run){
+  let i=0,ap=0,om=0;
+  const ov=modal('<div id="rv"></div>');ov._fin=()=>run.finish();
+  const next=()=>{
+    if(i>=B.length){close(ov);return;}
+    const x=B[i],r=st.items[x.r.id]||x.r,rest=B.length-i;
+    ov.querySelector('#rv').innerHTML=`<h2>Revisión ${i+1} de ${B.length}</h2>
+      <p class="meta">${esc(x.e.d.name)} › ${esc(x.s.d.name)}</p><p><b>${esc(recTitle(x.e,r))}</b></p>
+      <label>“${esc(x.tf.l)}” ahora</label><pre class="pv">${esc(showV(r.d[x.tf.k]))}</pre>
+      <label>Cómo quedaría</label><pre class="pv new">${esc(x.nv)}</pre>
+      ${run.op==='move'?`<p class="meta">“${esc(x.sf.l)}” quedaría vacío.</p>`:''}
+      <div class="row"><button class="btn" data-v="om">Omitir</button><button class="btn p" data-v="ap">Aplicar</button></div>
+      ${rest>1?`<div class="row sm"><button class="btn" data-v="omAll">Omitir los ${rest} que quedan</button><button class="btn" data-v="apAll">Aplicar los ${rest} que quedan</button></div>`:''}
+      <p class="meta">Aplicados: ${ap} · Omitidos: ${om}</p>`;
+  };
+  ov.addEventListener('click',ev=>{
+    const b=ev.target.closest('[data-v]');if(!b)return;const a=b.dataset.v;
+    if(a==='ap'){run.apply(B[i]);ap++;i++;}
+    else if(a==='om'){om++;i++;}
+    else if(a==='apAll'){for(;i<B.length;i++){run.apply(B[i]);ap++;}}
+    else if(a==='omAll'){om+=B.length-i;i=B.length;}
+    next();
+  });
+  next();
+}
+function openHist(){
+  const ops=alive('oplog').sort((a,b)=>b.d.at-a.d.at);
+  const ov=modal(`<h2>Historial de operaciones masivas</h2>
+    ${ops.length?ops.map(o=>`<div class="rel"><b>${esc(o.d.desc)}</b>
+      <div class="meta">${fmtDT(o.d.at)} · ${esc(o.d.dev||'')} · ${(o.d.ch||[]).length} registro(s)</div>
+      ${o.d.undone?`<div class="meta">↩️ Deshecha el ${fmtDT(o.d.undoneAt)}${o.d.conf?` · ${o.d.conf} no se restauraron por cambios posteriores`:''}</div>`
+        :`<div class="acts"><button class="btn" data-u="${o.id}">↩️ Deshacer</button></div>`}</div>`).join('')
+      :'<p class="meta">Todavía no hay operaciones.</p>'}
+    <p class="meta">Se guardan las últimas 20 operaciones y se sincronizan entre dispositivos. Al deshacer, los registros editados después de la operación no se pisan.</p>
+    <div class="row"><button class="btn" data-x>Cerrar</button></div>`,true);
+  ov.addEventListener('click',ev=>{const b=ev.target.closest('[data-u]');if(!b)return;if(undoOp(st.items[b.dataset.u])){close(ov);openHist();}});
+}
+function undoOp(o){
+  if(!o||o.d.undone)return false;
+  const ch=o.d.ch||[];
+  if(!confirm(`¿Deshacer “${o.d.desc}”?\nSe restauran hasta ${ch.length} registro(s).`))return false;
+  const same=(a,b)=>String(a??'')===String(b??'');let okN=0;const conf=[];
+  ch.forEach(([id,sk,sb,sa,dk,db,da])=>{
+    const r=st.items[id];
+    if(!r||r.deleted||!same(r.d[sk],sa)||!same(r.d[dk],da)){conf.push(r?recTitle(st.items[r.entityId],r):'(registro eliminado)');return;}
+    r.d={...r.d,[sk]:sb,[dk]:db};put(r);okN++;
+  });
+  o.d={...o.d,undone:1,undoneAt:now(),conf:conf.length};put(o);render();
+  alert(`Deshecho: ${okN} registro(s) restaurado(s).`+(conf.length?`\n\nNo se restauraron ${conf.length} porque cambiaron después de la operación:\n• ${conf.slice(0,10).join('\n• ')}${conf.length>10?'\n…':''}`:''));
+  return true;
 }
 
 function cfgEnt(e){
@@ -624,7 +800,9 @@ function openCfg(){
       <button class="btn" id="xExp">📤 Exportar a planilla (.xlsx)</button>
       <button class="btn" id="xImp">📥 Importar desde planilla (.xlsx)</button>
       <button class="btn" id="jExp">💾 Descargar respaldo completo (.json)</button>
-      <button class="btn" id="jImp">📂 Importar respaldo (.json)</button>
+      <button class="btn" id="jImp">📂 Importar respaldo (.json)</button><hr>
+      <button class="btn" id="bOpen">🔀 Copiar o mover datos entre campos</button>
+      <button class="btn" id="bHist">🕘 Historial de operaciones masivas</button>
     </div>
     <input type="file" id="fImp" accept=".xlsx,.xls,.json,application/json" hidden>
     <p class="meta">Al importar o sincronizar se combinan los datos: de cada registro queda la versión más reciente, venga de donde venga. Las bajas también se propagan.</p>
@@ -645,6 +823,8 @@ function openCfg(){
   q('#sFull').onclick=()=>{store();close(ov);fullSync();};
   q('#xExp').onclick=()=>exportXlsx();
   q('#jExp').onclick=()=>exportJson();
+  q('#bOpen').onclick=()=>{close(ov);openBulk();};
+  q('#bHist').onclick=()=>{close(ov);openHist();};
   let mode='';const fi=q('#fImp');
   q('#xImp').onclick=()=>{mode='x';fi.accept='.xlsx,.xls';fi.click();};
   q('#jImp').onclick=()=>{mode='j';fi.accept='.json,application/json';fi.click();};
