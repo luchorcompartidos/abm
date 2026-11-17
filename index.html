@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="app-version" content="v0.4.1">
 <meta name="theme-color" content="#1f5f9e">
 <title>Registros ABM</title>
 <style>
@@ -15,6 +16,8 @@ header{position:sticky;top:0;z-index:5;background:var(--card);box-shadow:0 1px 4
 .top{display:flex;align-items:center;gap:4px;height:48px}
 .top h1{font-size:18px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ver{background:rgba(255,255,255,.2);border:0;color:#fff;font-size:11px;padding:2px 8px;border-radius:9px;vertical-align:middle;font-weight:600}
+.ver.new{background:#f59e0b}
+.upd{display:none;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px;background:#f59e0b;color:#1c1f26;font-size:14px}.upd.on{display:flex}.upd button{border:0;border-radius:8px;padding:6px 12px;background:#1c1f26;color:#fff;font-size:14px}
 .rel{border-top:1px solid var(--bd);padding:10px 0}.rel b{color:var(--pri)}.rel pre{white-space:pre-wrap;font:inherit;font-size:14px;margin:4px 0 0}
 .top small{display:block;font-size:11px;font-weight:400;opacity:.8}
 .ib{background:none;border:0;color:inherit;font-size:21px;width:42px;height:42px;border-radius:50%;position:relative}
@@ -84,6 +87,7 @@ main{padding:10px}
     </div>
     <nav class="tabs" id="tabs"></nav>
   </div>
+  <div class="upd" id="upd" role="status"><span id="updTxt">Hay una versión nueva, recargá.</span><button type="button" id="updBtn">Recargar</button></div>
   <div class="subswrap"><button class="sarr l" id="sL" aria-label="Ver anteriores">‹</button><div class="subs" id="subs"></div><button class="sarr r" id="sR" aria-label="Ver más">›</button></div>
   <div class="tools" id="tools">
     <input id="q" type="search" placeholder="Buscar…">
@@ -774,39 +778,60 @@ const onGesture=()=>{
 ['click','keydown'].forEach(t=>document.addEventListener(t,onGesture,true));
 if(hasCW)makeWatcher();
 
-/* ---------- Versión y Changelog (desde las Releases de GitHub) ---------- */
+/* ---------- Versión (estándar caja de apps) ----------
+   1) Número escrito en el HTML (<meta name="app-version">): se ve siempre, sin conexión y con copias viejas.
+   2) Fecha y Changelog leídos de las Releases de GitHub (sin conexión: última copia guardada).
+      Fecha = la del archivo más reciente adjunto a la Release; si no tiene adjuntos, la del último commit incluido.
+   3) Si GitHub tiene una versión más alta que la del archivo: aviso "Hay una versión nueva, recargá". */
 const REPO='luchorcompartidos/abm';
+const APP_VERSION=(document.querySelector('meta[name="app-version"]')||{}).content||'v—';
 let rels=null;try{rels=JSON.parse(localStorage.getItem('abmRels')||'null');}catch(e){}
 const fmtDT=s=>new Date(s).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-function showVer(){$('#verBtn').textContent=rels&&rels[0]?rels[0].tag:'v—';}
+const semv=t=>(String(t).replace(/^v/,'').split('.').map(n=>parseInt(n)||0).concat([0,0,0])).slice(0,3);
+const cmpV=(a,b)=>{const x=semv(a),y=semv(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return y[i]-x[i];return 0;};
+const ultima=()=>rels&&rels[0];
+const hayNueva=()=>!!(ultima()&&APP_VERSION!=='v—'&&cmpV(ultima().tag,APP_VERSION)<0);
+function showVer(){
+  const b=$('#verBtn'),n=hayNueva();
+  b.textContent=APP_VERSION+(n?' ⬆':'');b.classList.toggle('new',n);
+  b.title=n?'Hay una versión nueva: '+ultima().tag:'Versión';
+  $('#upd').classList.toggle('on',n);
+  if(n)$('#updTxt').textContent=`Hay una versión nueva (${ultima().tag}), recargá.`;
+}
 async function loadRels(){
   try{
-    const r=await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=50`,{headers:{Accept:'application/vnd.github+json'}});
+    const h={headers:{Accept:'application/vnd.github+json'},cache:'no-store'};
+    const r=await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`,h);
     if(!r.ok)return;
-    const api=u=>fetch(`https://api.github.com/repos/${REPO}/${u}`,{headers:{Accept:'application/vnd.github+json'}}).then(x=>x.ok?x.json():[]).catch(()=>[]);
+    const api=u=>fetch(`https://api.github.com/repos/${REPO}/${u}`,h).then(x=>x.ok?x.json():[]).catch(()=>[]);
     const [tags,commits]=await Promise.all([api('tags?per_page=100'),api('commits?per_page=100')]);
     const cDate={},tSha={};
     (commits||[]).forEach(c=>cDate[c.sha]=c.commit&&(c.commit.committer||c.commit.author).date);
     (tags||[]).forEach(t=>tSha[t.name]=t.commit&&t.commit.sha);
-    // Fecha de los archivos = fecha del último commit incluido en la Release
-    rels=(await r.json()).filter(x=>!x.draft).map(x=>({tag:x.tag_name,date:cDate[tSha[x.tag_name]]||x.published_at||x.created_at,body:x.body||'',url:x.html_url}))
-      .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-    localStorage.setItem('abmRels',JSON.stringify(rels));showVer();
+    rels=(await r.json()).filter(x=>!x.draft&&!x.prerelease).map(x=>{
+      const f=(x.assets||[]).map(a=>a.updated_at).filter(Boolean).sort();
+      return {tag:x.tag_name,date:f.length?f[f.length-1]:(cDate[tSha[x.tag_name]]||x.published_at||x.created_at),body:x.body||'',url:x.html_url};
+    }).sort((a,b)=>cmpV(a.tag,b.tag));
+    try{localStorage.setItem('abmRels',JSON.stringify(rels));}catch(e){}
+    showVer();
   }catch(e){}
 }
+function recargar(){const u=new URL(location.href);u.searchParams.set('v',Date.now());location.replace(u);}
 function openVer(){
-  const r=rels&&rels[0];
-  const ov=modal(`<h2>Versión ${esc(r?r.tag:'desconocida')}</h2>
-    <p>${r?'Archivos actualizados el <b>'+fmtDT(r.date)+'</b>':'Todavía no se pudo consultar la versión (requiere conexión).'}</p>
-    <div class="acts"><button class="btn" id="vLog">📋 Changelog</button><button class="btn" data-x>Cerrar</button></div>`,true);
+  const r=(rels||[]).find(x=>x.tag===APP_VERSION),n=hayNueva();
+  const fecha=r?'Archivos actualizados el <b>'+fmtDT(r.date)+'</b>':rels?'Esta versión todavía no figura en las Releases de GitHub.':'Fecha no disponible (requiere conexión).';
+  const ov=modal(`<h2>Versión ${esc(APP_VERSION)}</h2><p>${fecha}</p>${n?`<p><b>Hay una versión nueva: ${esc(ultima().tag)}.</b></p>`:''}
+    <div class="acts">${n?'<button class="btn" id="vRec">↻ Recargar</button>':''}<button class="btn" id="vLog">📋 Changelog</button><button class="btn" data-x>Cerrar</button></div>`,true);
   ov.querySelector('#vLog').onclick=()=>{close(ov);openLog();};
+  const rb=ov.querySelector('#vRec');if(rb)rb.onclick=recargar;
 }
 function openLog(){
-  const list=(rels||[]).map(r=>`<div class="rel"><b>${esc(r.tag)}</b> · <span class="meta">${fmtDT(r.date)}</span>${r.body?`<pre>${esc(r.body)}</pre>`:''}</div>`).join('');
+  const list=(rels||[]).map(r=>`<div class="rel"><b>${esc(r.tag)}</b>${r.tag===APP_VERSION?' <span class="meta">(la que estás usando)</span>':''} · <span class="meta">${fmtDT(r.date)}</span>${r.body?`<pre>${esc(r.body)}</pre>`:''}</div>`).join('');
   modal(`<h2>Changelog</h2>${list||'<p class="meta">Sin datos todavía (requiere conexión).</p>'}
     <div class="acts"><a class="btn" href="https://github.com/${REPO}/releases" target="_blank" rel="noopener">Ver Releases en GitHub ↗</a><button class="btn" data-x>Cerrar</button></div>`,true);
 }
 $('#verBtn').onclick=openVer;
+$('#updBtn').onclick=recargar;
 showVer();loadRels();
 
 render();
