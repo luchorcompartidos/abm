@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-version" content="v0.5.1">
+<meta name="app-version" content="v0.5.2">
 <meta name="theme-color" content="#1f5f9e">
 <title>Registros ABM</title>
 <style>
@@ -1060,6 +1060,9 @@ if(hasCW)makeWatcher();
 const REPO='luchorcompartidos/abm';
 const APP_VERSION=(document.querySelector('meta[name="app-version"]')||{}).content||'v—';
 let rels=null;try{rels=JSON.parse(localStorage.getItem('abmRels')||'null');}catch(e){}
+// Estado de la última consulta a GitHub: así el diálogo distingue "no está publicada" de "no se pudo consultar"
+let relsAt=0;try{relsAt=+localStorage.getItem('abmRels_t')||0;}catch(e){}
+let lastFail=false,loading=null,reintento=false;
 const fmtDT=s=>new Date(s).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
 const semv=t=>(String(t).replace(/^v/,'').split('.').map(n=>parseInt(n)||0).concat([0,0,0])).slice(0,3);
 const cmpV=(a,b)=>{const x=semv(a),y=semv(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return y[i]-x[i];return 0;};
@@ -1072,28 +1075,33 @@ function showVer(){
   $('#upd').classList.toggle('on',n);
   if(n)$('#updTxt').textContent=`Hay una versión nueva (${ultima().tag}), recargá.`;
 }
-async function loadRels(){
+function loadRels(){if(!loading)loading=doLoadRels().finally(()=>{loading=null;});return loading;}
+async function doLoadRels(){
   try{
-    const h={headers:{Accept:'application/vnd.github+json'},cache:'no-store'};
-    const r=await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`,h);
-    if(!r.ok)return;
-    const api=u=>fetch(`https://api.github.com/repos/${REPO}/${u}`,h).then(x=>x.ok?x.json():[]).catch(()=>[]);
-    const [tags,commits]=await Promise.all([api('tags?per_page=100'),api('commits?per_page=100')]);
-    const cDate={},tSha={};
-    (commits||[]).forEach(c=>cDate[c.sha]=c.commit&&(c.commit.committer||c.commit.author).date);
-    (tags||[]).forEach(t=>tSha[t.name]=t.commit&&t.commit.sha);
+    const r=await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`,{headers:{Accept:'application/vnd.github+json'},cache:'no-store'});
+    if(!r.ok){lastFail=true;return;}
+    lastFail=false;relsAt=Date.now();try{localStorage.setItem('abmRels_t',String(relsAt));}catch(e){}
+    // Fecha = la del archivo más reciente adjunto a la Release (si no tiene adjuntos, la de publicación).
+    // Una sola consulta: así se gasta menos del límite de consultas de GitHub.
     rels=(await r.json()).filter(x=>!x.draft&&!x.prerelease).map(x=>{
       const f=(x.assets||[]).map(a=>a.updated_at).filter(Boolean).sort();
-      return {tag:x.tag_name,date:f.length?f[f.length-1]:(cDate[tSha[x.tag_name]]||x.published_at||x.created_at),body:x.body||'',url:x.html_url};
+      return {tag:x.tag_name,date:f.length?f[f.length-1]:(x.published_at||x.created_at),body:x.body||'',url:x.html_url};
     }).sort((a,b)=>cmpV(a.tag,b.tag));
     try{localStorage.setItem('abmRels',JSON.stringify(rels));}catch(e){}
     showVer();
-  }catch(e){}
+  }catch(e){lastFail=true;}
 }
 function recargar(){const u=new URL(location.href);u.searchParams.set('v',Date.now());location.replace(u);}
 function openVer(){
   const r=(rels||[]).find(x=>x.tag===APP_VERSION),n=hayNueva();
-  const fecha=r?'Archivos actualizados el <b>'+fmtDT(r.date)+'</b>':rels?'Esta versión todavía no figura en las Releases de GitHub.':'Fecha no disponible (requiere conexión).';
+  const hace=relsAt?` (información de hace ${Math.max(1,Math.round((Date.now()-relsAt)/60000))} min)`:'';
+  // Si la lista guardada no tiene esta versión, se vuelve a consultar GitHub antes de concluir nada
+  if(!r&&!reintento&&navigator.onLine!==false){reintento=true;const w=modal(`<h2>Versión ${esc(APP_VERSION)}</h2><p>Consultando GitHub…</p>`,true);loadRels().then(()=>{if(w.isConnected){close(w);openVer();}reintento=false;});return;}
+  const fecha=r?'Archivos actualizados el <b>'+fmtDT(r.date)+'</b>'
+    :navigator.onLine===false?`Sin conexión: no se puede consultar GitHub ahora${rels?hace:''}.`
+    :lastFail?`No se pudo consultar GitHub (puede ser un límite de consultas seguidas). Probá de nuevo en unos minutos${rels?hace:''}.`
+    :rels?'Esta versión todavía no figura en las Releases de GitHub. Se publica unos segundos después de cada entrega: probá de nuevo en un minuto.'
+    :'Fecha no disponible (requiere conexión).';
   const ov=modal(`<h2>Versión ${esc(APP_VERSION)}</h2><p>${fecha}</p>${n?`<p><b>Hay una versión nueva: ${esc(ultima().tag)}.</b></p>`:''}
     <div class="acts">${n?'<button class="btn" id="vRec">↻ Recargar</button>':''}<button class="btn" id="vLog">📋 Changelog</button><button class="btn" data-x>Cerrar</button></div>`,true);
   ov.querySelector('#vLog').onclick=()=>{close(ov);openLog();};
@@ -1106,6 +1114,9 @@ function openLog(){
 }
 $('#verBtn').onclick=openVer;
 $('#updBtn').onclick=recargar;
+// Se vuelve a consultar al volver a la app (si la información tiene más de 10 minutos) y al recuperar la conexión
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&Date.now()-relsAt>600000)loadRels();});
+window.addEventListener('online',()=>loadRels());
 showVer();loadRels();
 
 // Una única vez (implementación inicial): los "Descartado" con fecha hasta el 17/11/2026 pasan a Postergados/Desestimados
